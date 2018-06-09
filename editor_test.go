@@ -3,6 +3,8 @@ package ebpf
 import (
 	"fmt"
 	"testing"
+
+	"github.com/newtools/ebpf/asm"
 )
 
 func ExampleEditor_RewriteUint64() {
@@ -15,8 +17,8 @@ func ExampleEditor_RewriteUint64() {
 	//    }
 	//
 	insns := Instructions{
-		BPFILdImm64(Reg0, 0).Ref("my_ret"),
-		BPFIDstSrc(LdXDW, Reg0, Reg0),
+		BPFILdImm64(asm.R0, 0).Ref("my_ret"),
+		BPFIDstSrc(LdXDW, asm.R0, asm.R0),
 		BPFIOp(Exit),
 	}
 
@@ -155,14 +157,14 @@ func TestEditorLink(t *testing.T) {
 	insns := Instructions{
 		// Make sure the call doesn't happen at instruction 0
 		// to exercise the relative offset calculation.
-		BPFIDstSrc(MovSrc, Reg0, Reg1),
-		BPFIDstSrcImm(Call, Reg0, Reg1, -1).Ref("my_func"),
+		BPFIDstSrc(MovSrc, asm.R0, asm.R1),
+		BPFIDstSrcImm(Call, asm.R0, asm.R1, -1).Ref("my_func"),
 		BPFIOp(Exit),
 	}
 
 	editor := Edit(&insns)
 	err := editor.Link(Instructions{
-		BPFILdImm64(Reg0, 1337).Sym("my_func"),
+		BPFILdImm64(asm.R0, 1337).Sym("my_func"),
 		BPFIOp(Exit),
 	})
 	if err != nil {

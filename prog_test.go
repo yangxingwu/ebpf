@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/newtools/ebpf/asm"
 )
 
 func TestProgramRun(t *testing.T) {
@@ -17,22 +19,22 @@ func TestProgramRun(t *testing.T) {
 	// r1+4: ctx_end
 	ins := Instructions{
 		// r2 = *(r1+4)
-		BPFIDstOffSrc(LdXW, Reg2, Reg1, 4),
+		BPFIDstOffSrc(LdXW, asm.R2, asm.R1, 4),
 		// r1 = *(r1+0)
-		BPFIDstOffSrc(LdXW, Reg1, Reg1, 0),
+		BPFIDstOffSrc(LdXW, asm.R1, asm.R1, 0),
 		// r3 = r1
-		BPFIDstSrc(MovSrc, Reg3, Reg1),
+		BPFIDstSrc(MovSrc, asm.R3, asm.R1),
 		// r3 += len(buf)
-		BPFIDstImm(AddImm, Reg3, int32(len(buf))),
+		BPFIDstImm(AddImm, asm.R3, int32(len(buf))),
 		// if r3 > r2 goto +len(pat)
-		BPFIDstOffSrc(JGTSrc, Reg3, Reg2, int16(len(pat))),
+		BPFIDstOffSrc(JGTSrc, asm.R3, asm.R2, int16(len(pat))),
 	}
 	for i, b := range pat {
-		ins = append(ins, BPFIDstOffImm(StB, Reg1, int16(i), int32(b)))
+		ins = append(ins, BPFIDstOffImm(StB, asm.R1, int16(i), int32(b)))
 	}
 	ins = append(ins,
 		// return 42
-		BPFILdImm64(Reg0, 42),
+		BPFILdImm64(asm.R0, 42),
 		BPFIOp(Exit),
 	)
 
@@ -60,7 +62,7 @@ func TestProgramPin(t *testing.T) {
 	prog, err := NewProgram(&ProgramSpec{
 		Type: XDP,
 		Instructions: Instructions{
-			BPFILdImm64(Reg0, 0),
+			BPFILdImm64(asm.R0, 0),
 			BPFIOp(Exit),
 		},
 		License: "MIT",

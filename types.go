@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	"github.com/newtools/ebpf/asm"
+
+	"github.com/pkg/errors"
 )
 
-//go:generate stringer -output types_string.go -type=MapType,ProgType,Func
+//go:generate stringer -output types_string.go -type=MapType,ProgType
 
 // MapType indicates the type map structure
 // that will be initialized in the kernel.
@@ -101,166 +105,8 @@ const (
 
 // Limits and constants for the the eBPF runtime
 const (
-	// StackSize is the total size of the stack allocated for BPF programs
-	StackSize = 512
 	// InstructionSize is the size of the BPF instructions
 	InstructionSize = 8
-)
-
-// Class masks for eBPF operators
-// opcode structure:
-// msb      lsb
-// +---+--+---+
-// |mde|sz|CLS|
-// +---+--+---+
-const (
-	// ClassCode is the bitmask for the class bitfield
-	ClassCode = 0x07
-	// LdClass load memory
-	LdClass = 0x00
-	// LdXClass load memory from constant
-	LdXClass = 0x01
-	// StClass load registry from memory
-	StClass = 0x02
-	// StXClass load registry from constan
-	StXClass = 0x03
-	// ALUClass arithmetic operators
-	ALUClass = 0x04
-	// JmpClass jump operators
-	JmpClass = 0x05
-	// RetClass return operator
-	RetClass = 0x06
-	// MiscClass exit, et al operators
-	MiscClass = 0x07
-	// ALU64Class arithmetic in 64 bit mode; eBPF only
-	ALU64Class = 0x07
-)
-
-// Size masks for eBPF operators
-// opcode structure:
-// msb      lsb
-// +---+--+---+
-// |mde|SZ|cls|
-// +---+--+---+
-const (
-	// SizeCode is the bitmask for the size bitfield
-	SizeCode = 0x18
-	// DWSize - double word; 64 bits; eBPF only
-	DWSize = 0x18
-	// WSize - word; 32 bits
-	WSize = 0x00
-	// HSize - half-word; 16 bits
-	HSize = 0x08
-	// BSize - byte; 8 bits
-	BSize = 0x10
-)
-
-// Mode masks for eBPF operators
-// opcode structure:
-// msb      lsb
-// +---+--+---+
-// |MDE|sz|cls|
-// +---+--+---+
-const (
-	// ModeCode is the bitmask for the mode bitfield
-	ModeCode = 0xe0
-	// ImmMode - immediate value
-	ImmMode = 0x00
-	// AbsMode - immediate value + offset
-	AbsMode = 0x20
-	// IndMode - indirect (imm+src)
-	IndMode = 0x40
-	// MemMode - load from memory
-	MemMode = 0x60
-	// LenMode - ??
-	LenMode = 0x80
-	// MshMode - ??
-	MshMode = 0xa0
-	// XAddMode - add atomically across processors; eBPF only.
-	XAddMode = 0xc0
-)
-
-// alu/alu64/jmp opcode structure:
-// msb      lsb
-// +----+-+---+
-// |OP  |s|cls|
-// +----+-+---+
-// If the s bit is zero, then the source operand is imm,
-// If s is one, then the source operand is src.
-const (
-	// OpCode is the bitmask for ALU operator bitfield
-	OpCode = 0xf0
-	// AddOp - addition
-	AddOp = 0x00
-	// SubOp - subtraction
-	SubOp = 0x10
-	// MulOp - multiplication
-	MulOp = 0x20
-	// DivOp - division
-	DivOp = 0x30
-	// OrOp - bitwise or
-	OrOp = 0x40
-	// AndOp - bitwise and
-	AndOp = 0x50
-	// LShOp - bitwise shift left
-	LShOp = 0x60
-	// RShOp - bitwise shift right
-	RShOp = 0x70
-	// NegOp - sign/unsign signing bit
-	NegOp = 0x80
-	// ModOp - modulo
-	ModOp = 0x90
-	// XOrOp - bitwise xor
-	XOrOp = 0xa0
-	// MovOp - move value from one place to another; eBPF only.
-	MovOp = 0xb0
-	// ArShOp - arithmatic shift; eBPF only.
-	ArShOp = 0xc0
-
-	// EndFlag endian flag mode, eBPF only
-	EndFlag = 0xd0
-	// ToLeFlag toLE instruction, eBPF only
-	ToLeFlag = 0x00
-	// ToBeFlag toBE instruction, eBPF only
-	ToBeFlag = 0x08
-	// FromLeFlag fromLE instruction, eBPF only
-	FromLeFlag = 0x00
-	// FromBeFlag fromBE instruction, eBPF only
-	FromBeFlag = 0x08
-)
-
-// Branch instruction opcode masks
-const (
-	// JaOp to address
-	JaOp = 0x00
-	// JEqOp to address if r == imm
-	JEqOp = 0x10
-	// JGTOp to address if r > imm
-	JGTOp = 0x20
-	// JGEOp to address if r >= imm
-	JGEOp = 0x30
-	// JSETOp to address if signed r == signed imm
-	JSETOp = 0x40
-	// JNEOp to address if r != imm, eBPF only
-	JNEOp = 0x50
-	// JSGTOp to address if signed r > signed imm, eBPF only
-	JSGTOp = 0x60
-	// JSGEOp to address if signed r >= signed imm, eBPF only
-	JSGEOp = 0x70
-	// CallOp call into another BPF program, eBPF only
-	CallOp = 0x80
-	// ExitOp exit program
-	ExitOp = 0x90
-)
-
-// Source bitmask
-const (
-	// SrcCode from what address is the value coming
-	SrcCode = 0x08
-	// ImmSrc src is from constant
-	ImmSrc = 0x00
-	// RegSrc src is from register
-	RegSrc = 0x08
 )
 
 // ALU64 instructions
@@ -482,45 +328,6 @@ const (
 	Exit = 0x95
 )
 
-// Register register type
-type Register uint8
-
-const (
-
-	// Reg0   - return value from in-kernel function, and exit value for eBPF program
-	Reg0 = Register(iota)
-	// Reg1 - arguments 0 from eBPF program to in-kernel function
-	Reg1
-	// Reg2 - arguments 1 from eBPF program to in-kernel function
-	Reg2
-	// Reg3 - arguments 2 from eBPF program to in-kernel function
-	Reg3
-	// Reg4 - arguments 3 from eBPF program to in-kernel function
-	Reg4
-	// Reg5 - arguments 4 from eBPF program to in-kernel function
-	Reg5
-	// Reg6 - callee 0 saved registers that in-kernel function will preserve
-	Reg6
-	// Reg7 - callee 1 saved registers that in-kernel function will preserve
-	Reg7
-	// Reg8 - callee 2 saved registers that in-kernel function will preserve
-	Reg8
-	// Reg9 - callee 3 saved registers that in-kernel function will preserve
-	Reg9
-	// Reg10  - read-only frame pointer to access stack
-	Reg10
-	// RegFP (alias of Reg10)  - read-only frame pointer to access stack
-	RegFP = Reg10
-)
-
-func (r Register) String() string {
-	v := uint8(r)
-	if v == 10 {
-		return "rfp"
-	}
-	return fmt.Sprintf("r%d", v)
-}
-
 // All flags used by eBPF helper functions
 const (
 	// RecomputeCSUM SKBStoreBytes flags
@@ -571,324 +378,6 @@ const (
 	AdjRoomNet = 0
 )
 
-// Func is a built-in eBPF function.
-type Func int32
-
-// eBPF build-in functions
-const (
-	// MapLookupElement - void *map_lookup_elem(&map, &key)
-	// Return: Map value or NULL
-	MapLookupElement Func = iota + 1
-	// MapUpdateElement - int map_update_elem(&map, &key, &value, flags)
-	// Return: 0 on success or negative error
-	MapUpdateElement
-	// MapDeleteElement - int map_delete_elem(&map, &key)
-	// Return: 0 on success or negative error
-	MapDeleteElement
-	// ProbeRead - int bpf_probe_read(void *dst, int size, void *src)
-	// Return: 0 on success or negative error
-	ProbeRead
-	// KtimeGetNS - u64 bpf_ktime_get_ns(void)
-	// Return: current ktime
-	KtimeGetNS
-	// TracePrintk - int bpf_trace_printk(const char *fmt, int fmt_size, ...)
-	// Return: length of buffer written or negative error
-	TracePrintk
-	// GetPRandomu32 - u32 prandom_u32(void)
-	// Return: random value
-	GetPRandomu32
-	// GetSMPProcessorID - u32 raw_smp_processor_id(void)
-	// Return: SMP processor ID
-	GetSMPProcessorID
-	// SKBStoreBytes - skb_store_bytes(skb, offset, from, len, flags)
-	// store bytes into packet
-	// @skb: pointer to skb
-	// @offset: offset within packet from skb->mac_header
-	// @from: pointer where to copy bytes from
-	// @len: number of bytes to store into packet
-	// @flags: bit 0 - if true, recompute skb->csum
-	//         other bits - reserved
-	// Return: 0 on success
-	SKBStoreBytes
-	// CSUMReplaceL3 - l3_csum_replace(skb, offset, from, to, flags)
-	// recompute IP checksum
-	// @skb: pointer to skb
-	// @offset: offset within packet where IP checksum is located
-	// @from: old value of header field
-	// @to: new value of header field
-	// @flags: bits 0-3 - size of header field
-	//         other bits - reserved
-	// Return: 0 on success
-	CSUMReplaceL3
-	// CSUMReplaceL4 - l4_csum_replace(skb, offset, from, to, flags)
-	// recompute TCP/UDP checksum
-	// @skb: pointer to skb
-	// @offset: offset within packet where TCP/UDP checksum is located
-	// @from: old value of header field
-	// @to: new value of header field
-	// @flags: bits 0-3 - size of header field
-	//         bit 4 - is pseudo header
-	//         other bits - reserved
-	// Return: 0 on success
-	CSUMReplaceL4
-	// TailCall - int bpf_tail_call(ctx, prog_array_map, index)
-	// jump into another BPF program
-	// @ctx: context pointer passed to next program
-	// @prog_array_map: pointer to map which type is BPF_MAP_TYPE_PROG_ARRAY
-	// @index: index inside array that selects specific program to run
-	// Return: 0 on success or negative error
-	TailCall
-	// CloneRedirect - int bpf_clone_redirect(skb, ifindex, flags)
-	// redirect to another netdev
-	// @skb: pointer to skb
-	// @ifindex: ifindex of the net device
-	// @flags: bit 0 - if set, redirect to ingress instead of egress
-	//         other bits - reserved
-	// Return: 0 on success or negative error
-	CloneRedirect
-	// GetCurrentPIDTGID - u64 bpf_get_current_pid_tgid(void)
-	// Return: current->tgid << 32 | current->pid
-	GetCurrentPIDTGID
-	// GetCurrentUIDGID - u64 bpf_get_current_uid_gid(void)
-	// Return: current_gid << 32 | current_uid
-	GetCurrentUIDGID
-	// GetCurrentComm - int bpf_get_current_comm(char *buf, int size_of_buf) - stores current->comm into buf
-	// Return: 0 on success or negative error
-	GetCurrentComm
-	// GetCGroupClassID - u32 bpf_get_cgroup_classid(skb)
-	// retrieve a proc's classid
-	// @skb: pointer to skb
-	// Return: classid if != 0
-	GetCGroupClassID
-	// SKBVlanPush - int bpf_skb_vlan_push(skb, vlan_proto, vlan_tci)
-	// Return: 0 on success or negative error
-	SKBVlanPush
-	// SKBVlanPop - int bpf_skb_vlan_pop(skb)
-	// Return: 0 on success or negative error
-	SKBVlanPop
-	// SKBGetTunnelKey - int bpf_skb_get_tunnel_key(skb, key, size, flags)
-	// retrieve or populate tunnel metadata
-	// @skb: pointer to skb
-	// @key: pointer to 'struct bpf_tunnel_key'
-	// @size: size of 'struct bpf_tunnel_key'
-	// @flags: room for future extensions
-	// Return: 0 on success or negative error
-	SKBGetTunnelKey
-	// SKBSetTunnelKey - int bpf_skb_set_tunnel_key(skb, key, size, flags)
-	// retrieve or populate tunnel metadata
-	// @skb: pointer to skb
-	// @key: pointer to 'struct bpf_tunnel_key'
-	// @size: size of 'struct bpf_tunnel_key'
-	// @flags: room for future extensions
-	// Return: 0 on success or negative error
-	SKBSetTunnelKey
-	// PerfEventRead - u64 bpf_perf_event_read(map, flags)
-	// read perf event counter value
-	// @map: pointer to perf_event_array map
-	// @flags: index of event in the map or bitmask flags
-	// Return: value of perf event counter read or error code
-	PerfEventRead
-	// Redirect - int bpf_redirect(ifindex, flags)
-	// redirect to another netdev
-	// @ifindex: ifindex of the net device
-	// @flags: bit 0 - if set, redirect to ingress instead of egress
-	//         other bits - reserved
-	// Return: TC_ACT_REDIRECT
-	Redirect
-	// GetRouteRealm - u32 bpf_get_route_realm(skb)
-	// retrieve a dst's tclassid
-	// @skb: pointer to skb
-	// Return: realm if != 0
-	GetRouteRealm
-	// PerfEventOutput - int bpf_perf_event_output(ctx, map, flags, data, size)
-	// output perf raw sample
-	// @ctx: struct pt_regs*
-	// @map: pointer to perf_event_array map
-	// @flags: index of event in the map or bitmask flags
-	// @data: data on stack to be output as raw data
-	// @size: size of data
-	// Return: 0 on success or negative error
-	PerfEventOutput
-	// GetStackID - int bpf_get_stackid(ctx, map, flags)
-	// walk user or kernel stack and return id
-	// @ctx: struct pt_regs*
-	// @map: pointer to stack_trace map
-	// @flags: bits 0-7 - numer of stack frames to skip
-	//         bit 8 - collect user stack instead of kernel
-	//         bit 9 - compare stacks by hash only
-	//         bit 10 - if two different stacks hash into the same stackid
-	//                  discard old
-	//         other bits - reserved
-	// Return: >= 0 stackid on success or negative error
-	GetStackID
-	// CsumDiff - s64 bpf_csum_diff(from, from_size, to, to_size, seed)
-	// calculate csum diff
-	// @from: raw from buffer
-	// @from_size: length of from buffer
-	// @to: raw to buffer
-	// @to_size: length of to buffer
-	// @seed: optional seed
-	// Return: csum result or negative error code
-	CsumDiff
-	// SKBGetTunnelOpt - int bpf_skb_get_tunnel_opt(skb, opt, size)
-	// retrieve tunnel options metadata
-	// @skb: pointer to skb
-	// @opt: pointer to raw tunnel option data
-	// @size: size of @opt
-	// Return: option size
-	SKBGetTunnelOpt
-	// SKBSetTunnelOpt - int bpf_skb_set_tunnel_opt(skb, opt, size)
-	// populate tunnel options metadata
-	// @skb: pointer to skb
-	// @opt: pointer to raw tunnel option data
-	// @size: size of @opt
-	// Return: 0 on success or negative error
-	SKBSetTunnelOpt
-	// SKBChangeProto - int bpf_skb_change_proto(skb, proto, flags)
-	// Change protocol of the skb. Currently supported is v4 -> v6,
-	// v6 -> v4 transitions. The helper will also resize the skb. eBPF
-	// program is expected to fill the new headers via skb_store_bytes
-	// and lX_csum_replace.
-	// @skb: pointer to skb
-	// @proto: new skb->protocol type
-	// @flags: reserved
-	// Return: 0 on success or negative error
-	SKBChangeProto
-	// SKBChangeType - int bpf_skb_change_type(skb, type)
-	// Change packet type of skb.
-	// @skb: pointer to skb
-	// @type: new skb->pkt_type type
-	// Return: 0 on success or negative error
-	SKBChangeType
-	// SKBUnderCGroup - int bpf_skb_under_cgroup(skb, map, index)
-	// Check cgroup2 membership of skb
-	// @skb: pointer to skb
-	// @map: pointer to bpf_map in BPF_MAP_TYPE_CGROUP_ARRAY type
-	// @index: index of the cgroup in the bpf_map
-	// Return:
-	//   == 0 skb failed the cgroup2 descendant test
-	//   == 1 skb succeeded the cgroup2 descendant test
-	//    < 0 error
-	SKBUnderCGroup
-	// GetHashRecalc - u32 bpf_get_hash_recalc(skb)
-	// Retrieve and possibly recalculate skb->hash.
-	// @skb: pointer to skb
-	// Return: hash
-	GetHashRecalc
-	// GetCurrentTask - u64 bpf_get_current_task(void)
-	// Returns current task_struct
-	// Return: current
-	GetCurrentTask
-	// ProbeWriteUser - int bpf_probe_write_user(void *dst, void *src, int len)
-	// safely attempt to write to a location
-	// @dst: destination address in userspace
-	// @src: source address on stack
-	// @len: number of bytes to copy
-	// Return: 0 on success or negative error
-	ProbeWriteUser
-	// CurrentTaskUnderCGroup - int bpf_current_task_under_cgroup(map, index)
-	// Check cgroup2 membership of current task
-	// @map: pointer to bpf_map in BPF_MAP_TYPE_CGROUP_ARRAY type
-	// @index: index of the cgroup in the bpf_map
-	// Return:
-	//   == 0 current failed the cgroup2 descendant test
-	//   == 1 current succeeded the cgroup2 descendant test
-	//    < 0 error
-	CurrentTaskUnderCGroup
-	// SKBChangeTail - int bpf_skb_change_tail(skb, len, flags)
-	// The helper will resize the skb to the given new size, to be used f.e.
-	// with control messages.
-	// @skb: pointer to skb
-	// @len: new skb length
-	// @flags: reserved
-	// Return: 0 on success or negative error
-	SKBChangeTail
-	// SKBPullData - int bpf_skb_pull_data(skb, len)
-	// The helper will pull in non-linear data in case the skb is non-linear
-	// and not all of len are part of the linear section. Only needed for
-	// read/write with direct packet access.
-	// @skb: pointer to skb
-	// @Len: len to make read/writeable
-	// Return: 0 on success or negative error
-	SKBPullData
-	// CSUMUpdate - s64 bpf_csum_update(skb, csum)
-	// Adds csum into skb->csum in case of CHECKSUM_COMPLETE.
-	// @skb: pointer to skb
-	// @csum: csum to add
-	// Return: csum on success or negative error
-	CSUMUpdate
-	// SetHashInvalid - void bpf_set_hash_invalid(skb)
-	// Invalidate current skb->hash.
-	// @skb: pointer to skb
-	SetHashInvalid
-	// GetNUMANodeID - int bpf_get_numa_node_id()
-	// Return: Id of current NUMA node.
-	GetNUMANodeID
-	// SKBChangeHead - int bpf_skb_change_head()
-	// Grows headroom of skb and adjusts MAC header offset accordingly.
-	// Will extends/reallocae as required automatically.
-	// May change skb data pointer and will thus invalidate any check
-	// performed for direct packet access.
-	// @skb: pointer to skb
-	// @len: length of header to be pushed in front
-	// @flags: Flags (unused for now)
-	// Return: 0 on success or negative error
-	SKBChangeHead
-	// XDPAdjustHead - int bpf_xdp_adjust_head(xdp_md, delta)
-	// Adjust the xdp_md.data by delta
-	// @xdp_md: pointer to xdp_md
-	// @delta: An positive/negative integer to be added to xdp_md.data
-	// Return: 0 on success or negative on error
-	XDPAdjustHead
-	// ProbeReadStr - int bpf_probe_read_str(void *dst, int size, const void *unsafe_ptr)
-	// Copy a NUL terminated string from unsafe address. In case the string
-	// length is smaller than size, the target is not padded with further NUL
-	// bytes. In case the string length is larger than size, just count-1
-	// bytes are copied and the last byte is set to NUL.
-	// @dst: destination address
-	// @size: maximum number of bytes to copy, including the trailing NUL
-	// @unsafe_ptr: unsafe address
-	// Return:
-	//   > 0 length of the string including the trailing NUL on success
-	//   < 0 error
-	ProbeReadStr
-	// GetSocketCookie - u64 bpf_get_socket_cookie(skb)
-	// Get the cookie for the socket stored inside sk_buff.
-	// @skb: pointer to skb
-	// Return: 8 Bytes non-decreasing number on success or 0 if the socket
-	// field is missing inside sk_buff
-	GetSocketCookie
-	// GetSocketUID - u32 bpf_get_socket_uid(skb)
-	// Get the owner uid of the socket stored inside sk_buff.
-	// @skb: pointer to skb
-	// Return: uid of the socket owner on success or overflowuid if failed.
-	GetSocketUID
-	// SetHash - u32 bpf_set_hash(skb, hash)
-	// Set full skb->hash.
-	// @skb: pointer to skb
-	// @hash: hash to set
-	SetHash
-	// SetSockOpt - int bpf_setsockopt(bpf_socket, level, optname, optval, optlen)
-	// Calls setsockopt. Not all opts are available, only those with
-	// integer optvals plus TCP_CONGESTION.
-	// Supported levels: SOL_SOCKET and IPROTO_TCP
-	// @bpf_socket: pointer to bpf_socket
-	// @level: SOL_SOCKET or IPROTO_TCP
-	// @optname: option name
-	// @optval: pointer to option value
-	// @optlen: length of optval in byes
-	// Return: 0 or negative error
-	SetSockOpt
-	// SKBAdjustRoom - int bpf_skb_adjust_room(skb, len_diff, mode, flags)
-	// Grow or shrink room in sk_buff.
-	// @skb: pointer to skb
-	// @len_diff: (signed) amount of room to grow/shrink
-	// @mode: operation mode (enum bpf_adj_room_mode)
-	// @flags: reserved for future use
-	// Return: 0 on success or negative error code
-	SKBAdjustRoom
-)
-
 // ProgType of the eBPF program
 type ProgType uint32
 
@@ -925,7 +414,7 @@ const (
 )
 
 type bpfInstruction struct {
-	OpCode    uint8
+	OpCode    asm.OpCode
 	Registers bpfRegisters
 	Offset    int16
 	Constant  int32
@@ -933,20 +422,20 @@ type bpfInstruction struct {
 
 type bpfRegisters uint8
 
-func newBPFRegisters(dst, src Register) bpfRegisters {
+func newBPFRegisters(dst, src asm.Register) bpfRegisters {
 	return bpfRegisters((src << 4) | (dst & 0xF))
 }
 
-func (r bpfRegisters) Dst() Register {
-	return Register(r & 0xF)
+func (r bpfRegisters) Dst() asm.Register {
+	return asm.Register(r & 0xF)
 }
 
-func (r bpfRegisters) Src() Register {
-	return Register(r >> 4)
+func (r bpfRegisters) Src() asm.Register {
+	return asm.Register(r >> 4)
 }
 
 // Instructions is the lowest level construct for a BPF snippet in array.
-type Instructions []Instruction
+type Instructions []asm.Instruction
 
 func (inss Instructions) String() string {
 	return fmt.Sprint(inss)
@@ -1015,11 +504,13 @@ func (inss Instructions) Format(f fmt.State, c rune) {
 // expected by the kernel.
 func (inss Instructions) MarshalBinary() ([]byte, error) {
 	wr := bytes.NewBuffer(make([]byte, 0, len(inss)*InstructionSize))
-	for _, ins := range inss {
-		cons := int32(ins.Constant)
+	for i, ins := range inss {
+		if ins.OpCode == asm.InvalidOpCode {
+			return nil, errors.Errorf("invalid operation at position %d", i)
+		}
 
-		// LdDW has a 64bit immediate. The least significant 32bit
-		// are written first.
+		// Encode least significant 32bit first for 64bit operations.
+		cons := int32(ins.Constant)
 		if ins.OpCode == LdDW {
 			cons = int32(uint32(ins.Constant))
 		}
@@ -1035,7 +526,6 @@ func (inss Instructions) MarshalBinary() ([]byte, error) {
 			return nil, err
 		}
 
-		// LdDW is the only operation with a 64bit immediate
 		if ins.OpCode != LdDW {
 			continue
 		}
@@ -1051,248 +541,40 @@ func (inss Instructions) MarshalBinary() ([]byte, error) {
 	return wr.Bytes(), nil
 }
 
-// Instruction represents the data
-// of a specific eBPF instruction and how
-// it will execute (opcode, registers, constant, offset, etc).
-type Instruction struct {
-	OpCode      uint8
-	DstRegister Register
-	SrcRegister Register
-	Offset      int16
-	Constant    int64
-	Reference   string
-	Symbol      string
-}
-
-// Ref creates a reference to a symbol.
-func (ins Instruction) Ref(symbol string) Instruction {
-	ins.Reference = symbol
-	return ins
-}
-
-// Sym creates a symbol.
-func (ins Instruction) Sym(name string) Instruction {
-	ins.Symbol = name
-	return ins
-}
-
-// EncodedLength returns the encoded length in number of instructions.
-func (ins Instruction) EncodedLength() int {
-	if ins.OpCode == LdDW {
-		return 2
-	}
-	return 1
-}
-
-var classMap = map[int]string{
-	LdClass:    "Ld",
-	LdXClass:   "LdX",
-	StClass:    "St",
-	StXClass:   "StX",
-	ALUClass:   "ALU32",
-	JmpClass:   "Jmp",
-	RetClass:   "Rt",
-	ALU64Class: "ALU64",
-}
-
-func (ins Instruction) String() string {
-	var opStr string
-	op := uint8(ins.OpCode)
-	var class, dst, src, off, imm string
-	var sBit uint8
-	var alu32 string
-	classCode := op & ClassCode
-	switch classCode {
-	case RetClass, LdClass, LdXClass, StClass, StXClass:
-		class = classMap[int(classCode)]
-		mode := ""
-		xAdd := false
-		dst = fmt.Sprintf(" dst: %s", ins.DstRegister)
-		switch op & ModeCode {
-		case ImmMode:
-			mode = "Imm"
-			imm = fmt.Sprintf(" imm: %d", ins.Constant)
-		case AbsMode:
-			mode = "Abs"
-			dst = ""
-			imm = fmt.Sprintf(" imm: %d", ins.Constant)
-			off = ""
-		case IndMode:
-			mode = "Ind"
-			src = fmt.Sprintf(" src: %s", ins.SrcRegister)
-			imm = fmt.Sprintf(" imm: %d", ins.Constant)
-			off = ""
-		case MemMode:
-			src = fmt.Sprintf(" src: %s", ins.SrcRegister)
-			off = fmt.Sprintf(" off: %d", ins.Offset)
-			imm = fmt.Sprintf(" imm: %d", ins.Constant)
-		case LenMode:
-			mode = "Len"
-		case MshMode:
-			mode = "Msh"
-		case XAddMode:
-			mode = "XAdd"
-			src = fmt.Sprintf(" src: %s", ins.SrcRegister)
-			xAdd = true
-		}
-		size := ""
-		switch op & SizeCode {
-		case DWSize:
-			size = "DW"
-		case WSize:
-			size = "W"
-		case HSize:
-			size = "H"
-		case BSize:
-			size = "B"
-		}
-		if xAdd {
-			opStr = fmt.Sprintf("%s%s", mode, class)
-		}
-		opStr = fmt.Sprintf("%s%s%s", class, mode, size)
-	case ALU64Class, ALUClass:
-		if classCode == ALUClass {
-			alu32 = "32"
-		}
-		dst = fmt.Sprintf(" dst: %s", ins.DstRegister)
-		sBit = op & SrcCode
-		opSuffix := ""
-		if sBit == ImmSrc {
-			imm = fmt.Sprintf(" imm: %d", ins.Constant)
-			opSuffix = "Imm"
-		} else {
-			src = fmt.Sprintf(" src: %s", ins.SrcRegister)
-			opSuffix = "Src"
-		}
-		opPrefix := ""
-		switch op & OpCode {
-		case AddOp:
-			opPrefix = "Add"
-		case SubOp:
-			opPrefix = "Sub"
-		case MulOp:
-			opPrefix = "Mul"
-		case DivOp:
-			opPrefix = "Div"
-		case OrOp:
-			opPrefix = "Or"
-		case AndOp:
-			opPrefix = "And"
-		case LShOp:
-			opPrefix = "LSh"
-		case RShOp:
-			opPrefix = "RSh"
-		case NegOp:
-			opPrefix = "Neg"
-		case ModOp:
-			opPrefix = "Mod"
-		case XOrOp:
-			opPrefix = "XOr"
-		case MovOp:
-			opPrefix = "Mov"
-		case ArShOp:
-			opPrefix = "ArSh"
-		case EndFlag:
-			alu32 = ""
-			src = ""
-			imm = fmt.Sprintf(" imm: %d", ins.Constant)
-			opPrefix = "ToFromLe"
-			if sBit == 1 {
-				opPrefix = "ToFromBe"
-			}
-			opPrefix = ""
-		}
-		opStr = fmt.Sprintf("%s%s%s", opPrefix, alu32, opSuffix)
-	case JmpClass:
-		dst = fmt.Sprintf(" dst: %s", ins.DstRegister)
-		off = fmt.Sprintf(" off: %d", ins.Offset)
-		sBit = op & SrcCode
-		opSuffix := ""
-		if sBit == ImmSrc {
-			imm = fmt.Sprintf(" imm: %d", ins.Constant)
-			opSuffix = "Imm"
-		} else {
-			src = fmt.Sprintf(" src: %s", ins.SrcRegister)
-			opSuffix = "Src"
-		}
-		opPrefix := ""
-		switch op & ModOp {
-		case JaOp:
-			opPrefix = "Ja"
-		case JEqOp:
-			opPrefix = "JEq"
-		case JGTOp:
-			opPrefix = "JGT"
-		case JGEOp:
-			opPrefix = "JGE"
-		case JSETOp:
-			opPrefix = "JSET"
-		case JNEOp:
-			opPrefix = "JNE"
-		case JSGTOp:
-			opPrefix = "JSGT"
-		case JSGEOp:
-			opPrefix = "JSGE"
-		case CallOp:
-			imm = ""
-			src = ""
-			off = ""
-			dst = ""
-			opPrefix = "Call"
-			if ins.SrcRegister == Reg1 {
-				// bpf-to-bpf call
-				opSuffix = fmt.Sprintf(" %v", ins.Constant)
-			} else {
-				opSuffix = fmt.Sprintf(" %v", Func(ins.Constant))
-			}
-
-		case ExitOp:
-			imm = ""
-			src = ""
-			off = ""
-			dst = ""
-			opSuffix = ""
-			opPrefix = "Exit"
-		}
-		opStr = fmt.Sprintf("%s%s", opPrefix, opSuffix)
-	}
-	return fmt.Sprintf("%s%s%s%s%s", opStr, dst, src, off, imm)
-}
-
 // BPFIOp BPF instruction that stands alone (i.e. exit)
-func BPFIOp(opCode uint8) Instruction {
-	return Instruction{
+func BPFIOp(opCode asm.OpCode) asm.Instruction {
+	return asm.Instruction{
 		OpCode: opCode,
 	}
 }
 
 // BPFIDst BPF instruction with a dst
-func BPFIDst(opCode uint8, dst Register) Instruction {
-	return Instruction{
+func BPFIDst(opCode asm.OpCode, dst asm.Register) asm.Instruction {
+	return asm.Instruction{
 		OpCode:      opCode,
 		DstRegister: dst,
 	}
 }
 
-// BPFIImm BPF Instruction with a constant
-func BPFIImm(opCode uint8, imm int32) Instruction {
-	return Instruction{
+// BPFIImm BPF asm.Instruction with a constant
+func BPFIImm(opCode asm.OpCode, imm int32) asm.Instruction {
+	return asm.Instruction{
 		OpCode:   opCode,
 		Constant: int64(imm),
 	}
 }
 
 // BPFIDstOff BPF instruction with a dst, and offset
-func BPFIDstOff(opCode uint8, dst Register, off int16) Instruction {
-	return Instruction{
+func BPFIDstOff(opCode asm.OpCode, dst asm.Register, off int16) asm.Instruction {
+	return asm.Instruction{
 		OpCode: opCode,
 		Offset: off,
 	}
 }
 
 // BPFIDstImm BPF instruction with a dst, and constant
-func BPFIDstImm(opCode uint8, dst Register, imm int32) Instruction {
-	return Instruction{
+func BPFIDstImm(opCode asm.OpCode, dst asm.Register, imm int32) asm.Instruction {
+	return asm.Instruction{
 		OpCode:      opCode,
 		DstRegister: dst,
 		Constant:    int64(imm),
@@ -1300,8 +582,8 @@ func BPFIDstImm(opCode uint8, dst Register, imm int32) Instruction {
 }
 
 // BPFIDstSrc BPF instruction with a dst, and src
-func BPFIDstSrc(opCode uint8, dst, src Register) Instruction {
-	return Instruction{
+func BPFIDstSrc(opCode asm.OpCode, dst, src asm.Register) asm.Instruction {
+	return asm.Instruction{
 		OpCode:      opCode,
 		DstRegister: dst,
 		SrcRegister: src,
@@ -1309,8 +591,8 @@ func BPFIDstSrc(opCode uint8, dst, src Register) Instruction {
 }
 
 // BPFIDstOffImm BPF instruction with a dst, offset, and constant
-func BPFIDstOffImm(opCode uint8, dst Register, off int16, imm int32) Instruction {
-	return Instruction{
+func BPFIDstOffImm(opCode asm.OpCode, dst asm.Register, off int16, imm int32) asm.Instruction {
+	return asm.Instruction{
 		OpCode:      opCode,
 		DstRegister: dst,
 		Offset:      off,
@@ -1319,8 +601,8 @@ func BPFIDstOffImm(opCode uint8, dst Register, off int16, imm int32) Instruction
 }
 
 // BPFIDstOffSrc BPF instruction with a dst, offset, and src.
-func BPFIDstOffSrc(opCode uint8, dst, src Register, off int16) Instruction {
-	return Instruction{
+func BPFIDstOffSrc(opCode asm.OpCode, dst, src asm.Register, off int16) asm.Instruction {
+	return asm.Instruction{
 		OpCode:      opCode,
 		DstRegister: dst,
 		SrcRegister: src,
@@ -1329,8 +611,8 @@ func BPFIDstOffSrc(opCode uint8, dst, src Register, off int16) Instruction {
 }
 
 // BPFIDstSrcImm BPF instruction with a dst, src, and constant
-func BPFIDstSrcImm(opCode uint8, dst, src Register, imm int32) Instruction {
-	return Instruction{
+func BPFIDstSrcImm(opCode asm.OpCode, dst, src asm.Register, imm int32) asm.Instruction {
+	return asm.Instruction{
 		OpCode:      opCode,
 		DstRegister: dst,
 		SrcRegister: src,
@@ -1339,8 +621,8 @@ func BPFIDstSrcImm(opCode uint8, dst, src Register, imm int32) Instruction {
 }
 
 // BPFIDstOffImmSrc BPF instruction with a dst, src, offset, and constant
-func BPFIDstOffImmSrc(opCode uint8, dst, src Register, off int16, imm int32) Instruction {
-	return Instruction{
+func BPFIDstOffImmSrc(opCode asm.OpCode, dst, src asm.Register, off int16, imm int32) asm.Instruction {
+	return asm.Instruction{
 		OpCode:      opCode,
 		DstRegister: dst,
 		SrcRegister: src,
@@ -1351,16 +633,16 @@ func BPFIDstOffImmSrc(opCode uint8, dst, src Register, off int16, imm int32) Ins
 
 // BPFILdMapFd loads a user space fd into a BPF program as a reference to a
 // specific eBPF map.
-func BPFILdMapFd(dst Register, imm int) Instruction {
+func BPFILdMapFd(dst asm.Register, imm int) asm.Instruction {
 	return BPFILdImm64Raw(dst, 1, int64(imm))
 }
 
-func BPFILdImm64(dst Register, imm int64) Instruction {
+func BPFILdImm64(dst asm.Register, imm int64) asm.Instruction {
 	return BPFILdImm64Raw(dst, 0, imm)
 }
 
-func BPFILdImm64Raw(dst, src Register, imm int64) Instruction {
-	return Instruction{
+func BPFILdImm64Raw(dst, src asm.Register, imm int64) asm.Instruction {
+	return asm.Instruction{
 		OpCode:      LdDW,
 		DstRegister: dst,
 		SrcRegister: src,
@@ -1368,8 +650,8 @@ func BPFILdImm64Raw(dst, src Register, imm int64) Instruction {
 	}
 }
 
-func BPFCall(fn Func) Instruction {
-	return Instruction{
+func BPFCall(fn asm.Func) asm.Instruction {
+	return asm.Instruction{
 		OpCode:   Call,
 		Constant: int64(fn),
 	}

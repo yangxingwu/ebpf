@@ -7,6 +7,8 @@ import (
 	"io"
 	"strings"
 
+	"github.com/newtools/ebpf/asm"
+
 	"github.com/pkg/errors"
 )
 
@@ -281,7 +283,7 @@ func loadInstructions(bo binary.ByteOrder, data []byte) (Instructions, map[uint6
 			cons = int64(uint64(uint32(ins2.Constant))<<32 | uint64(uint32(ins.Constant)))
 		}
 
-		insns = append(insns, Instruction{
+		insns = append(insns, asm.Instruction{
 			OpCode:      ins.OpCode,
 			DstRegister: ins.Registers.Dst(),
 			SrcRegister: ins.Registers.Src(),

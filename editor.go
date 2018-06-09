@@ -1,6 +1,8 @@
 package ebpf
 
 import (
+	"github.com/newtools/ebpf/asm"
+
 	"github.com/pkg/errors"
 )
 
@@ -8,7 +10,7 @@ import (
 type Editor struct {
 	instructions  *Instructions
 	refs          map[string][]int
-	offsets       map[*Instruction]int
+	offsets       map[*asm.Instruction]int
 	encodedLength int
 }
 
@@ -18,7 +20,7 @@ type Editor struct {
 // contents.
 func Edit(insns *Instructions) *Editor {
 	refs := make(map[string][]int)
-	offsets := make(map[*Instruction]int, len(*insns))
+	offsets := make(map[*asm.Instruction]int, len(*insns))
 	encodedLength := 0
 	for i, ins := range *insns {
 		insPtr := &(*insns)[i]
@@ -168,7 +170,7 @@ func (ed *Editor) RewriteBoolArray(symbol string, values []bool) error {
 // rewriteLoadAndDeref deals with references to global variables as emitted by LLVM.
 // When compiled they are represented by a dummy load instruction (which has a zero immediate)
 // and a derefencing operation for the correct size.
-func (ed *Editor) rewriteLoadAndDeref(symbol string, derefOp uint8, length int, values []int64) error {
+func (ed *Editor) rewriteLoadAndDeref(symbol string, derefOp asm.OpCode, length int, values []int64) error {
 	indices := ed.refs[symbol]
 	if len(indices) == 0 {
 		return errors.Errorf("unknown symbol %v", symbol)
@@ -201,7 +203,7 @@ func (ed *Editor) rewriteLoadAndDeref(symbol string, derefOp uint8, length int, 
 		load.Constant = values[index]
 
 		// Replace the deref with a mov
-		*deref = Instruction{
+		*deref = asm.Instruction{
 			OpCode:      MovSrc,
 			DstRegister: deref.DstRegister,
 			SrcRegister: load.DstRegister,
@@ -245,7 +247,7 @@ func (ed *Editor) Link(sections ...Instructions) error {
 		for _, index := range indices {
 			ins := &(*ed.instructions)[index]
 
-			if ins.OpCode != Call || ins.SrcRegister != Reg1 {
+			if ins.OpCode != Call || ins.SrcRegister != asm.R1 {
 				continue
 			}
 
@@ -285,11 +287,11 @@ func (ed *Editor) Link(sections ...Instructions) error {
 
 type linkEditor struct {
 	*Editor
-	symbols map[string]*Instruction
+	symbols map[string]*asm.Instruction
 }
 
 func newLinkEditor(insns Instructions) (*linkEditor, error) {
-	symbols := make(map[string]*Instruction)
+	symbols := make(map[string]*asm.Instruction)
 
 	for i, ins := range insns {
 		insPtr := &insns[i]

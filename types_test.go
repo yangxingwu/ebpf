@@ -2,14 +2,16 @@ package ebpf
 
 import (
 	"fmt"
+
+	"github.com/newtools/ebpf/asm"
 )
 
 // ExampleInstructions_Format shows the different options available
 // to format an instruction stream.
 func ExampleInstructions_Format() {
 	insns := Instructions{
-		BPFCall(MapLookupElement).Sym("my_func"),
-		BPFILdImm64(Reg0, 42),
+		BPFCall(asm.MapLookupElement).Sym("my_func"),
+		BPFILdImm64(asm.R0, 42),
 		BPFIOp(Exit),
 	}
 

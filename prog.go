@@ -8,6 +8,8 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/newtools/ebpf/asm"
+
 	"github.com/pkg/errors"
 )
 
@@ -147,7 +149,7 @@ func (bpf *Program) testRun(in []byte, repeat int) (uint32, []byte, time.Duratio
 		prog, err := NewProgram(&ProgramSpec{
 			Type: XDP,
 			Instructions: Instructions{
-				BPFILdImm64(Reg0, 0),
+				BPFILdImm64(asm.R0, 0),
 				BPFIOp(Exit),
 			},
 			License: "MIT",
